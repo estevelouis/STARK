@@ -75,8 +75,13 @@ def parse_args(args):
                         help="Path to a file where counts of queries will be stored per sentence.")
     parser.add_argument("--detailed_results_file", default=None, type=str,
                         help="Path to a file where all examples will be stored.")
+    parser.add_argument("--annodoc_example_dir", default=None, type=str,
+                        help="Path to a directory where annodoc example files are stored (js library for visualization).")
+    parser.add_argument("--annodoc_detailed_dir", default=None, type=str,
+                        help="Path to a directory where annodoc detailed files are stored (js library for visualization).")
 
     parser.add_argument("--max_lines", default=None, type=str, help="Maximum number of trees in the output.")
+    parser.add_argument("--node_info", default=None, type=str, help="Information about nodes in separate columns.")
     parser.add_argument("--frequency_threshold", default=None, type=int, help="Frequency threshold.")
     parser.add_argument("--association_measures", default=None, type=str, help="Association measures.")
     parser.add_argument("--continuation_processing", default=None, type=str, help="Nodes number.")
@@ -148,6 +153,8 @@ def read_configs(config, args):
     configs['node_order'] = (config.getboolean('settings', 'fixed') if not args.fixed else args.fixed == 'yes')
     configs['association_measures'] = (config.getboolean('settings', 'association_measures')
                                        if not args.association_measures else args.association_measures == 'yes')
+    configs['node_info'] = (config.getboolean('settings', 'node_info')
+                                       if not args.node_info else args.node_info == 'yes')
 
     # optional parameters
     if config.has_option('settings', 'allowed_labels') or args.allowed_labels:
@@ -207,6 +214,18 @@ def read_configs(config, args):
     else:
         configs['detailed_results_file'] = config.get('settings', 'detailed_results_file') \
             if config.has_option('settings', 'detailed_results_file') else None
+
+    if args.annodoc_example_dir:
+        configs['annodoc_example_dir'] = args.annodoc_example_dir
+    else:
+        configs['annodoc_example_dir'] = config.get('settings', 'annodoc_example_dir') \
+            if config.has_option('settings', 'annodoc_example_dir') else None
+
+    if args.annodoc_detailed_dir:
+        configs['annodoc_detailed_dir'] = args.annodoc_detailed_dir
+    else:
+        configs['annodoc_detailed_dir'] = config.get('settings', 'annodoc_detailed_dir') \
+            if config.has_option('settings', 'annodoc_detailed_dir') else None
 
     configs['depsearch'] = config.getboolean('settings', 'depsearch') \
         if not args.depsearch else args.depsearch == 'yes'

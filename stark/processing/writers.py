@@ -14,10 +14,12 @@
 # limitations under the License.
 
 import csv
+import hashlib
 import json
 import math
 import os
 import random
+import shutil
 import string
 from abc import abstractmethod
 from pathlib import Path
@@ -53,6 +55,7 @@ class Writer(object):
         """
         other_representation_trees = self.other_summary.representation_trees if self.other_summary else None
         other_corpus_size = self.other_summary.corpus_size if self.other_summary else None
+        random_sentence_position = 0
 
         # skip elements that do not fit filters
         if self.filters['frequency_threshold'] or self.filters['display_size_range'][-1]:
@@ -89,6 +92,12 @@ class Writer(object):
         if self.configs['detailed_results_file']:
             self.write_detailed_results_file()
 
+        if self.configs['annodoc_example_dir'] and (self.configs['detailed_results_file'] or self.configs['example']):
+            self.write_annodoc_files()
+
+        if self.configs['annodoc_detailed_dir'] and self.configs['detailed_results_file']:
+            self.write_annodoc_detailed_files()
+
         if self.filters['display_size_range'][-1]:
             if not self.configs['greedy_counter']:
                 len_words = self.filters['display_size_range'][-1]
@@ -96,10 +105,12 @@ class Writer(object):
                 len_words = min(self.filters['display_size_range'][-1], self.summary.max_tree_size)
         else:
             len_words = int(len(self.configs['query'].split(" ")) / 2 + 1)
-        header = ["Tree"] + ["Node " + string.ascii_uppercase[i % 26] + str(int(i/26)) + "-" + node_type if i >= 26 else
+        header = ["Tree"]
+        if self.configs['node_info']:
+            header += ["Node " + string.ascii_uppercase[i % 26] + str(int(i/26)) + "-" + node_type if i >= 26 else
                              "Node " + string.ascii_uppercase[i % 26] + "-" + node_type for i in range(len_words) for
-                             node_type in self.filters['node_types']] + ['Absolute frequency']
-        header += ['Relative frequency']
+                             node_type in self.filters['node_types']]
+        header += ['Absolute frequency', 'Relative frequency']
         if self.filters['node_order']:
             header += ['Order']
         if self.configs['grew_match']:
@@ -114,6 +125,8 @@ class Writer(object):
             header += ['Head node']
         if self.filters['example']:
             header += ['Example']
+        if self.filters['annodoc']:
+            header += ['Annodoc']
         if self.filters['association_measures']:
             header += ['MI', 'MI3', 'Dice', 'logDice', 't-score', 'simple-LL']
         if self.configs['compare']:
@@ -134,8 +147,10 @@ class Writer(object):
                 (len_words - len(word_array)) * len(word_array[0]))]
             key = literal_key[1:-1] if (len(literal_key) > 0 and literal_key[0] == '(' and literal_key[-1] == ')') else literal_key
 
-            row = [key] + words_only + [str(v['number'])]
-            row += ['%.1f' % relative_frequency]
+            row = [key]
+            if self.configs['node_info']:
+                row += words_only
+            row += [str(v['number']), '%.1f' % relative_frequency]
             if self.filters['node_order']:
                 order_letters = v['order_letters']
                 row += [order_letters]
@@ -156,8 +171,23 @@ class Writer(object):
             if self.filters['print_root']:
                 row += [v['root_name']]
             if self.filters['example']:
-                random_sentence_position = int(len(v['sentence']) * random.random())
-                row += [v['sentence'][random_sentence_position][1]]
+                random_sentence_position = 0
+                min_sentence_size = 100000
+                final_row = [v['sentence'][random_sentence_position][1]]
+                for i, s in enumerate(v['sentence']):
+                    if s[3] < 15:
+                        final_row = [s[1]]
+                        random_sentence_position = i
+                        break
+                    elif s[3] < min_sentence_size:
+                        final_row = [s[1]]
+                        random_sentence_position = i
+                        min_sentence_size = s[3]
+                row += final_row
+            if self.filters['annodoc'] and (self.configs['detailed_results_file'] or self.filters['example']):
+                annodoc_dict = {'id': v['sentence'][random_sentence_position][0],'positions': v['sentence'][random_sentence_position][2][1],'subtree_hash': hashlib.sha1(k.encode('utf-8')).hexdigest()}
+                annodoc_json = json.dumps(annodoc_dict)
+                row += [annodoc_json]
             if self.filters['association_measures']:
                 row += self.get_collocabilities(v, self.summary.unigrams, self.summary.corpus_size)
             if self.configs['compare']:
@@ -192,6 +222,42 @@ class Writer(object):
                 for s in v['sentence']:
                     wf.write(k + '\t' + s[0] + '\t' + s[1] + '\n')
 
+    def write_annodoc_files(self):
+        """
+        Writes conllu files separated by examples.
+        :return:
+        """
+        annodoc_dir = Path(self.configs['annodoc_example_dir'])
+        if annodoc_dir.exists():
+            shutil.rmtree(annodoc_dir, ignore_errors=True)
+        annodoc_dir.mkdir()
+        for k, v in self.summary.representation_trees.items():
+            for s in v['sentence']:
+                annodoc_path = Path(self.configs['annodoc_example_dir'], s[0])
+                if not annodoc_path.exists():
+                    with open(annodoc_path, "w", newline="",
+                              encoding="utf-8") as wf:
+                        wf.write(s[2][0])
+
+    def write_annodoc_detailed_files(self):
+        """
+        Writes tsv files that contain hashes of subtrees in a name. Each file contains a list with sentence_id and
+        positions of subtree in a sentence.
+        :return:
+        """
+        annodoc_dir = Path(self.configs['annodoc_detailed_dir'])
+        if annodoc_dir.exists():
+            shutil.rmtree(annodoc_dir, ignore_errors=True)
+        annodoc_dir.mkdir()
+        for k, v in self.summary.representation_trees.items():
+            path = hashlib.sha1(k.encode('utf-8')).hexdigest()
+            annodoc_path = Path(self.configs['annodoc_detailed_dir'], path) # calculate hash?
+            if not annodoc_path.exists():
+                with open(annodoc_path, "w", newline="",
+                          encoding="utf-8") as wf:
+                    for s in v['sentence']:
+                        wf.write(f'{str(s[0])}\t{str(s[2][1])}\n')
+
     @staticmethod
     def get_keyness(abs_freq_A, abs_freq_B, count_A, count_B):
         """
@@ -212,7 +278,11 @@ class Writer(object):
                 abs_freq_B * math.log(abs_freq_B / E2))) if abs_freq_B > 0 else 0
         BIC = LL - math.log(count_A + count_B) if abs_freq_B > 0 else 0
         log_ratio = math.log(((abs_freq_A / count_A) / (abs_freq_B / count_B)), 2) if abs_freq_B > 0 else 0
-        OR = (abs_freq_A / (count_A - abs_freq_A)) / (abs_freq_B / (count_B - abs_freq_B)) if abs_freq_B > 0 else 0
+        if count_A == abs_freq_A or count_B == abs_freq_B:
+            OR = 'NaN'
+        else:
+            OR = (abs_freq_A / (count_A - abs_freq_A)) / (abs_freq_B / (count_B - abs_freq_B)) if abs_freq_B > 0 else 0
+            OR = '%.2f' % OR
         diff = (((abs_freq_A / count_A) * 1000000 - (abs_freq_B / count_B) * 1000000) * 100) / (
                 (abs_freq_B / count_B) * 1000000) if abs_freq_B > 0 else 0
 
@@ -220,7 +290,7 @@ class Writer(object):
             return ['%.0f' % abs_freq_B, '%.1f' % (abs_freq_B * 1000000.0 / count_B), ratio, LL, BIC, log_ratio, OR,
                     diff]
         return ['%.0f' % abs_freq_B, '%.1f' % (abs_freq_B * 1000000.0 / count_B), ratio, '%.2f' % LL,
-                '%.2f' % BIC, '%.2f' % log_ratio, '%.2f' % OR, '%.2f' % diff]
+                '%.2f' % BIC, '%.2f' % log_ratio, OR, '%.2f' % diff]
 
     @staticmethod
     def get_grew(nodes, links, node_types, node_order, location_mapper, dependency_type, complete):
@@ -290,6 +360,13 @@ class Writer(object):
         :param corpus_size:
         :return:
         """
+        # n of ngram
+        n = len(ngram['word_array'])
+
+        # collocabilities are supported for n <= 10
+        if n > 10:
+            return ['NaN'] * 6
+
         sum_fwi = 0.0
         mul_fwi = 1.0
         for key_array in ngram['word_array']:
@@ -307,8 +384,6 @@ class Writer(object):
         # number of all words
         N = corpus_size
 
-        # n of ngram
-        n = len(ngram['word_array'])
         O = ngram['number']
         E = mul_fwi / pow(N, n - 1)
 

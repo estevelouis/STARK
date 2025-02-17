@@ -112,17 +112,18 @@ class Counter(object):
         :return:
         """
         recreated_sentence = ''
+        subtree_node_positions = []
         for token_i, token in enumerate(sentence['tokens']):
-            order = r.get_order(self.filters)
-            if token_i + 1 in order:
-                letter_position = order.index(token_i + 1)
-                order_letters = r.get_order_letters(order)
+            subtree_node_positions = r.get_order(self.filters)
+            if token_i + 1 in subtree_node_positions:
+                letter_position = subtree_node_positions.index(token_i + 1)
+                order_letters = r.get_order_letters(subtree_node_positions)
                 recreated_sentence += f'{order_letters[letter_position]}[{token[0]}]'
             else:
                 recreated_sentence += token[0]
             if token[1]:
                 recreated_sentence += ' '
-        return recreated_sentence
+        return recreated_sentence, subtree_node_positions
 
     def postprocess_query_results(self, r, sentence):
         """
@@ -142,17 +143,24 @@ class Counter(object):
             key = key_raw + order_letters
         else:
             key = key_raw
+        sentence_size = len(sentence['tokens']) if 'tokens' in sentence else 10000
         if key in self.summary.representation_trees:
             if self.filters['detailed_results_file']:
-                recreated_sentence = self.recreate_sentence(sentence, r)
+                recreated_sentence, subtree_node_positions = self.recreate_sentence(sentence, r)
+                sentence_conll = (r.node.node.get_root().conll, subtree_node_positions) if self.filters['annodoc'] else None
+
                 self.summary.representation_trees[key]['sentence'].append((sentence['id'],
-                                                                           recreated_sentence))
-            elif self.filters['example'] and random.random() < 1.0 - (
-                    self.summary.representation_trees[key]['number'] /
-                    (self.summary.representation_trees[key]['number'] + 1)):
-                recreated_sentence = self.recreate_sentence(sentence, r)
+                                                                           recreated_sentence,
+                                                                           sentence_conll,
+                                                                           sentence_size))
+            elif self.filters['example'] and self.summary.representation_trees[key]['sentence'][0][
+                3] >= 15 and self.summary.representation_trees[key]['sentence'][0][3] > sentence_size:
+                recreated_sentence, subtree_node_positions = self.recreate_sentence(sentence, r)
+                sentence_conll = (r.node.node.get_root().conll, subtree_node_positions) if self.filters['annodoc'] else None
                 self.summary.representation_trees[key]['sentence'] = [(sentence['id'],
-                                                                       recreated_sentence)]
+                                                                       recreated_sentence,
+                                                                       sentence_conll,
+                                                                       sentence_size)]
             self.summary.representation_trees[key]['number'] += 1
         else:
             self.summary.representation_trees[key] = {'number': 1, 'key': key_raw, 'word_array': word_array}
@@ -163,9 +171,13 @@ class Counter(object):
 
                 # recreate example sentence with shown positions of subtree
             if self.filters['example'] or self.filters['detailed_results_file']:
-                recreated_sentence = self.recreate_sentence(sentence, r)
+                recreated_sentence, subtree_node_positions = self.recreate_sentence(sentence, r)
+                sentence_conll = (r.node.node.get_root().conll, subtree_node_positions) if self.filters['annodoc'] else None
+                sentence_size = len(sentence['tokens']) if 'tokens' in sentence else 10000
                 self.summary.representation_trees[key]['sentence'] = [(sentence['id'],
-                                                                       recreated_sentence)]
+                                                                       recreated_sentence,
+                                                                       sentence_conll,
+                                                                       sentence_size)]
             if self.filters['node_order']:
                 self.summary.representation_trees[key]['order_letters'] = order_letters
                 if self.configs['depsearch']:
